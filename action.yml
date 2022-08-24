@@ -32,7 +32,7 @@ runs:
     - name: 'Get yq'
       shell: bash
       run: |
-        wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+        wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && 
         sudo chmod +x /usr/bin/yq
 
     - name: 'Update Manifests'
@@ -46,7 +46,6 @@ runs:
         GITHUB_TOKEN: ${{ inputs.token }}
         GITHUB_ACTOR: ${{ github.actor }}
       run: |
-        git remote set-url --push origin https://$GITHUB_ACTOR:$GITHUB_TOKEN@github.com/penguin-statistics/manifests
         git config --global user.name "Penguin Statistics DevOps"
         git config --global user.email "devops@penguin-stats.io"
         git add .
