@@ -16,6 +16,10 @@ inputs:
     description: 'The version of the resources to deploy.'
     required: true
 
+  token:
+    description: 'The token to use to push to the manifest repository.'
+    required: true
+
 runs:
   using: 'composite'
   steps:
@@ -40,7 +44,7 @@ runs:
     - name: 'Commit and Push'
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ inputs.token }}
         GITHUB_ACTOR: ${{ github.actor }}
       run: |
         git remote set-url --push origin https://$GITHUB_ACTOR:$GITHUB_TOKEN@github.com/penguin-statistics/manifests
