@@ -1,0 +1,53 @@
+name: 'ManifestBot'
+description: 'ManifestBot updates the Penguin Statistics manifests repository to deploy a specified version of resources.'
+
+inputs:
+  file-path:
+    description: 'The path to values-override.yaml relative to the manifest repository.'
+    required: true
+    default: 'applications/backend/values-prod.yaml'
+
+  version-path:
+    description: 'The path to the version field in values-override.yaml.'
+    required: true
+    default: 'image.tag'
+
+  version:
+    description: 'The version of the resources to deploy.'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 'Checkout'
+      uses: 'actions/checkout@v3'
+      with:
+        repository: 'penguin-statistics/manifests'
+
+    - name: 'Get yq'
+      shell: bash
+      run: |
+        apt update
+        apt install -y wget
+        wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+        chmod +x /usr/bin/yq
+
+    - name: 'Update Manifests'
+      shell: bash
+      run: |
+        yq eval -i ".${{ inputs.version-path }} = \"${{ inputs.version }}\"" "${{ inputs.file-path }}"
+    
+    - name: 'Commit and Push'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_ACTOR: ${{ github.actor }}
+      run: |
+        git remote set-url --push origin https://$GITHUB_ACTOR:$GITHUB_TOKEN@github.com/penguin-statistics/manifests
+        git config --global user.name "Penguin Statistics DevOps"
+        git config --global user.email "devops@penguin-stats.io"
+        git add .
+        git commit -m "${{ inputs.file-path }}: update to ${{ inputs.version }}"
+        git push
+        
+        
