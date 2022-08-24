@@ -37,7 +37,7 @@ runs:
     - name: 'Chmod yq'
       shell: bash
       run: |
-        chmod +x /usr/bin/yq
+        sudo chmod +x /usr/bin/yq
 
     - name: 'Update Manifests'
       shell: bash
