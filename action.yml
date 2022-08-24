@@ -27,6 +27,7 @@ runs:
       uses: 'actions/checkout@v3'
       with:
         repository: 'penguin-statistics/manifests'
+        token: ${{ inputs.token }}
 
     - name: 'Get yq'
       shell: bash
