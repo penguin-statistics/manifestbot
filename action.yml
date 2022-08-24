@@ -32,7 +32,7 @@ runs:
     - name: 'Get yq'
       shell: bash
       run: |
-        wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+        sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
 
     - name: 'Chmod yq'
       shell: bash
