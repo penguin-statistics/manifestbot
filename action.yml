@@ -32,9 +32,8 @@ runs:
     - name: 'Get yq'
       shell: bash
       run: |
-        sudo apt update && sudo apt install -y wget
         wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-        chmod +x /usr/bin/yq
+        sudo chmod +x /usr/bin/yq
 
     - name: 'Update Manifests'
       shell: bash
