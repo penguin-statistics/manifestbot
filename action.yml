@@ -1,16 +1,26 @@
 name: 'ManifestBot'
-description: 'ManifestBot updates the Penguin Statistics manifests repository to deploy a specified version of resources.'
+description: 'ManifestBot updates the Penguin Statistics manifests repository to deploy a specified version of resources. It sets a KEY=value line of a dotenv file (env-key), a field of a YAML file (file-path), or both, then commits and pushes.'
 
 inputs:
   file-path:
-    description: 'The path to values-override.yaml relative to the manifest repository.'
-    required: true
-    default: 'applications/backend/values-prod.yaml'
+    description: 'The path to a YAML values file (e.g. applications/backend/values-prod.yaml) relative to the manifest repository. Its version-path field is set to the version with yq. Empty (the default) skips the YAML update.'
+    required: false
+    default: ''
 
   version-path:
-    description: 'The path to the version field in values-override.yaml.'
+    description: 'The path to the version field in the file-path YAML file.'
     required: true
     default: 'image.tag'
+
+  env-key:
+    description: 'The key of a KEY=value line in env-file whose value is set to the version (e.g. BACKEND_TAG). The line must appear exactly once. Empty (the default) skips the dotenv update.'
+    required: false
+    default: ''
+
+  env-file:
+    description: 'The path to the dotenv file holding env-key, relative to the manifest repository.'
+    required: false
+    default: 'hosts/penguin-box/.env'
 
   version:
     description: 'The version of the resources to deploy.'
@@ -23,6 +33,41 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # inputs reach the scripts through env, never through ${{ }} inside run: (script injection)
+    - name: 'Validate Inputs'
+      shell: bash
+      env:
+        FILE_PATH: ${{ inputs.file-path }}
+        VERSION_PATH: ${{ inputs.version-path }}
+        ENV_KEY: ${{ inputs.env-key }}
+        ENV_FILE: ${{ inputs.env-file }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [[ -z $FILE_PATH && -z $ENV_KEY ]]; then
+          echo "::error::ManifestBot: nothing to update, set env-key and/or file-path"
+          exit 1
+        fi
+        # a docker image tag: no /, &, \, |, quotes, $ or newline, so it is safe in sed, yq and compose interpolation
+        if [[ ! $VERSION =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+          echo "::error::ManifestBot: version '$VERSION' is not a valid image tag ([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})"
+          exit 1
+        fi
+        if [[ -n $ENV_KEY ]]; then
+          if [[ ! $ENV_KEY =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+            echo "::error::ManifestBot: env-key '$ENV_KEY' must match ^[A-Z][A-Z0-9_]*$"
+            exit 1
+          fi
+          if [[ -z $ENV_FILE ]]; then
+            echo "::error::ManifestBot: env-file is empty"
+            exit 1
+          fi
+        fi
+        if [[ -n $FILE_PATH && ! $VERSION_PATH =~ ^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$ ]]; then
+          echo "::error::ManifestBot: version-path '$VERSION_PATH' must be dot-separated keys (e.g. image.tag)"
+          exit 1
+        fi
+
     - name: 'Checkout'
       uses: 'actions/checkout@v4'
       with:
@@ -30,30 +75,81 @@ runs:
         token: ${{ inputs.token }}
 
     - name: 'Get yq'
+      if: ${{ inputs.file-path != '' }}
       shell: bash
       run: |
         sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
 
     - name: 'Chmod yq'
+      if: ${{ inputs.file-path != '' }}
       shell: bash
       run: |
         sudo chmod +x /usr/bin/yq
 
-    - name: 'Update Manifests'
+    - name: 'Update Manifests (YAML)'
+      if: ${{ inputs.file-path != '' }}
       shell: bash
+      env:
+        FILE_PATH: ${{ inputs.file-path }}
+        VERSION_PATH: ${{ inputs.version-path }}
+        VERSION: ${{ inputs.version }}
       run: |
-        yq eval -i ".${{ inputs.version-path }} = \"${{ inputs.version }}\"" "${{ inputs.file-path }}"
-    
+        set -euo pipefail
+        yq eval -i ".${VERSION_PATH} = strenv(VERSION)" "$FILE_PATH"
+
+    - name: 'Update Manifests (dotenv)'
+      if: ${{ inputs.env-key != '' }}
+      shell: bash
+      env:
+        ENV_KEY: ${{ inputs.env-key }}
+        ENV_FILE: ${{ inputs.env-file }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [[ ! -f $ENV_FILE ]]; then
+          echo "::error::ManifestBot: $ENV_FILE does not exist in the manifest repository"
+          exit 1
+        fi
+        # ENV_KEY and VERSION are validated above: no regex or sed metacharacters
+        count=$(grep -c "^${ENV_KEY}=" "$ENV_FILE" || true)
+        if [[ $count -ne 1 ]]; then
+          echo "::error::ManifestBot: expected exactly one ${ENV_KEY}= line in $ENV_FILE, found $count"
+          exit 1
+        fi
+        sed -i "s/^${ENV_KEY}=.*/${ENV_KEY}=${VERSION}/" "$ENV_FILE"
+        grep -n "^${ENV_KEY}=" "$ENV_FILE"
+
     - name: 'Commit and Push'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.token }}
         GITHUB_ACTOR: ${{ github.actor }}
+        FILE_PATH: ${{ inputs.file-path }}
+        ENV_KEY: ${{ inputs.env-key }}
+        ENV_FILE: ${{ inputs.env-file }}
+        VERSION: ${{ inputs.version }}
       run: |
+        set -euo pipefail
+        files=()
+        subjects=()
+        if [[ -n $ENV_KEY ]] && ! git diff --quiet -- "$ENV_FILE"; then
+          files+=("$ENV_FILE")
+          subjects+=("$ENV_FILE: $ENV_KEY=$VERSION")
+        fi
+        if [[ -n $FILE_PATH ]] && ! git diff --quiet -- "$FILE_PATH"; then
+          files+=("$FILE_PATH")
+          subjects+=("$FILE_PATH: update to $VERSION")
+        fi
+        if [[ ${#files[@]} -eq 0 ]]; then
+          echo "ManifestBot: nothing changed (already at $VERSION), not committing"
+          exit 0
+        fi
+        message=${subjects[0]}
+        for subject in "${subjects[@]:1}"; do
+          message+="; $subject"
+        done
         git config --global user.name "Penguin Statistics DevOps"
         git config --global user.email "devops@penguin-stats.io"
-        git add .
-        git commit -m "${{ inputs.file-path }}: update to ${{ inputs.version }}"
+        git add -- "${files[@]}"
+        git commit -m "$message"
         git push
-        
-        
